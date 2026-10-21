@@ -1,0 +1,12 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+# Is file ko repo me rakhne se Render khud service bana dega.
+# Dashboard me sirf GROQ_API_KEY ki value dalni hai (sync: false = secret, repo me nahi jayegi).
+services:
+  - type: web
+    name: transcript-backend
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
