@@ -24,7 +24,20 @@ from pydantic import BaseModel
 
 GROQ_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
 GROQ_MODEL = "whisper-large-v3-turbo"
-MAX_GROQ_BYTES = 24 * 1024 * 1024  # Groq limit 25MB — thoda safe margin
+OPENAI_URL = "https://api.openai.com/v1/audio/transcriptions"
+OPENAI_MODEL = "whisper-1"
+MAX_GROQ_BYTES = 24 * 1024 * 1024  # Whisper limit 25MB — thoda safe margin
+
+
+def detect_provider(api_key: str) -> tuple[str, str, str]:
+    """Key ke prefix se provider pehchano: gsk_ = Groq, sk- = OpenAI.
+    Returns (provider_name, url, model)."""
+    if api_key.startswith("gsk_"):
+        return ("groq", GROQ_URL, GROQ_MODEL)
+    if api_key.startswith("sk-"):
+        return ("openai", OPENAI_URL, OPENAI_MODEL)
+    # Prefix samajh na aaye to Groq hi try karo (purana behaviour)
+    return ("groq", GROQ_URL, GROQ_MODEL)
 ALLOWED_URL_HOSTS = ("instagram.com", "facebook.com", "fb.watch", "fb.com")
 
 app = FastAPI(title="TranscriptAI Pro Backend", version="1.0.0")
@@ -52,8 +65,8 @@ def require_groq_key() -> str:
             status_code=503,
             detail={
                 "code": "SERVER_NOT_CONFIGURED",
-                "message": "Server par GROQ_API_KEY set nahi hai. "
-                           "Pehle Render me GROQ_API_KEY lagao, phir try karo.",
+                "message": "Server par API key set nahi hai. "
+                           "Pehle Render me key (Groq gsk_ ya OpenAI sk-) lagao, phir try karo.",
             },
         )
     return key
@@ -91,8 +104,9 @@ def transcribe_with_groq(audio_path: Path, language: str, api_key: str,
     """Ek audio file Groq Whisper ko bhejo, saaf result dict wapas karo."""
     audio_path = shrink_audio_if_needed(audio_path)
 
+    provider, whisper_url, whisper_model = detect_provider(api_key)
     data: dict = {
-        "model": GROQ_MODEL,
+        "model": whisper_model,
         "response_format": "verbose_json",
         "timestamp_granularities[]": "segment",
         "temperature": "0",
@@ -104,7 +118,7 @@ def transcribe_with_groq(audio_path: Path, language: str, api_key: str,
         with audio_path.open("rb") as fh:
             files = {"file": (audio_path.name, fh, "application/octet-stream")}
             resp = httpx.post(
-                GROQ_URL,
+                whisper_url,
                 # Browser-style UA: Groq/Cloudflare kabhi-kabhi default python UA ko
                 # 403 (error 1010) se block karta hai — ye header usi ka fix hai.
                 headers={"Authorization": f"Bearer {api_key}",
@@ -120,13 +134,13 @@ def transcribe_with_groq(audio_path: Path, language: str, api_key: str,
 
     if resp.status_code == 401:
         raise error(502, "GROQ_AUTH_FAILED",
-                    "GROQ_API_KEY galat lag rahi hai. Render me sahi key check karo.")
+                    "API key galat lag rahi hai (ya us provider par balance/quota nahi hai). Render me sahi key check karo.")
     if resp.status_code == 413:
         raise error(422, "FILE_TOO_LARGE",
-                    "File Groq ke 25MB limit se badi hai. Chhoti file try karo.")
+                    "File Whisper ke 25MB limit se badi hai. Chhoti file try karo.")
     if resp.status_code != 200:
         raise error(502, "GROQ_FAILED",
-                    f"Groq transcription fail hua (HTTP {resp.status_code}). "
+                    f"Whisper transcription fail hua (HTTP {resp.status_code}). "
                     "Thodi der baad dobara try karo.")
 
     payload = resp.json()
